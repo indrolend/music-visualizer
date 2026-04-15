@@ -1,0 +1,344 @@
+Below is a clean, implementation-focused handoff you can paste directly into Copilot Chat (or use as a project spec). It is structured to minimize ambiguity and prevent overengineering.
+
+⸻
+
+HANDOFF: Live Orb Visualizer (v1)
+
+Objective
+
+Build a mobile-friendly, real-time audio visualizer that:
+	•	Plays an audio file
+	•	Renders a particle-based orb visualizer in real time
+	•	Allows live parameter adjustment with immediate feedback
+	•	Supports scrubbing and playback controls
+	•	Can export the visual output to MP4
+
+This is a live visual instrument, not a video editor.
+
+⸻
+
+Core Principles
+	•	Audio playback time is the single source of truth
+	•	All visuals update in real time
+	•	Parameter changes apply immediately
+	•	No timeline system (no scenes, no sequencing)
+	•	One evolving state only
+	•	Keep UI minimal and focused
+	•	Avoid unnecessary abstraction
+
+⸻
+
+Tech Constraints (v1)
+	•	Browser-based (Canvas or WebGL acceptable, prefer Canvas 2D first)
+	•	Must run on mobile browsers
+	•	No heavy dependencies unless necessary
+	•	Export can use:
+	•	canvas frame capture + ffmpeg (or MediaRecorder if simpler)
+
+⸻
+
+Features (v1)
+
+Audio
+	•	Load local audio file
+	•	Play / pause
+	•	Scrub (seek)
+	•	Loop toggle
+
+Visualizer
+	•	Particle-based orb
+	•	Real-time audio-reactive motion
+	•	Cohesive shape (never fully breaks apart)
+
+Controls (sliders only)
+
+radius
+particleCount
+sensitivity
+baseline
+smoothing
+burst
+swirl
+jitter
+damping
+glow
+
+Preview
+	•	Real-time rendering
+	•	Slightly simplified if needed for performance
+
+Export
+	•	Export to MP4
+	•	User-configurable resolution + FPS
+	•	Blocking process (no background jobs)
+
+⸻
+
+Particle System Design
+
+Particle structure
+
+{
+  angle: number,
+  radius0: number,
+  x: number,
+  y: number,
+  vx: number,
+  vy: number,
+  noiseOffset: number,
+  depth: number
+}
+
+
+⸻
+
+Distribution (outer-mid biased)
+
+radialBias = 0.5 + 0.5 * Math.pow(Math.random(), 0.4)
+radius0 = baseRadius * radialBias
+
+
+⸻
+
+Per-frame update loop
+
+At each frame:
+	1.	Read current audio time
+	2.	Compute audio features:
+	•	energy (RMS)
+	•	low
+	•	mid
+	•	high
+	3.	Apply smoothing
+	4.	Compute target radius
+	5.	Update each particle using forces
+
+⸻
+
+Forces
+
+Home attraction
+
+ax += (homeX - x) * cohesion
+ay += (homeY - y) * cohesion
+
+
+⸻
+
+Center pull
+
+ax += -x * centerPull
+ay += -y * centerPull
+
+
+⸻
+
+Radial expansion
+
+targetRadius = baseRadius * (1 + energy * sensitivity)
+
+dx = x / length
+dy = y / length
+
+ax += dx * (targetRadius - currentRadius) * radialStrength
+ay += dy * (targetRadius - currentRadius) * radialStrength
+
+
+⸻
+
+Swirl (mid frequencies)
+
+ax += -dy * swirl * mid
+ay += dx * swirl * mid
+
+
+⸻
+
+Jitter (high frequencies)
+
+noise = noise2D(noiseOffset + time)
+
+ax += noise.x * jitter * high
+ay += noise.y * jitter * high
+
+
+⸻
+
+Burst (low frequencies, edge-weighted)
+
+edgeFactor = clamp(currentRadius / baseRadius, 0, 1)
+
+burstForce = low * burst * edgeFactor
+
+ax += dx * burstForce
+ay += dy * burstForce
+
+
+⸻
+
+Damping
+
+vx *= damping
+vy *= damping
+
+
+⸻
+
+Integrate
+
+vx += ax
+vy += ay
+
+x += vx
+y += vy
+
+
+⸻
+
+Rendering
+
+Particle appearance
+	•	soft circular glints
+	•	small radius
+	•	additive-like blending
+
+Color
+	•	gradient based on radius
+
+t = currentRadius / maxRadius
+color = gradient(t)
+
+Glow (simple)
+	•	optional second pass
+	•	larger radius, lower alpha
+
+⸻
+
+Audio Analysis
+
+Use Web Audio API:
+	•	Create AudioContext
+	•	Use AnalyserNode
+	•	Extract:
+	•	time domain → RMS (energy)
+	•	frequency data → bands
+
+Band ranges:
+	•	low: 20–180 Hz
+	•	mid: 180–1800 Hz
+	•	high: 1800–8000 Hz
+
+⸻
+
+UI Layout
+
+Main screen
+	•	Center: canvas preview
+	•	Bottom: transport controls
+	•	play / pause
+	•	scrub bar
+	•	loop toggle
+
+Sections (tab or swipe-based)
+
+Orb
+	•	radius
+	•	particleCount
+
+Motion
+	•	burst
+	•	swirl
+	•	jitter
+	•	damping
+
+Audio
+	•	sensitivity
+	•	baseline
+	•	smoothing
+
+Visual
+	•	glow
+
+Export
+	•	resolution
+	•	fps
+	•	export button
+
+⸻
+
+State Model
+
+{
+  audioFile,
+  currentTime,
+  isPlaying,
+  loop,
+  params: {
+    radius,
+    particleCount,
+    sensitivity,
+    baseline,
+    smoothing,
+    burst,
+    swirl,
+    jitter,
+    damping,
+    glow
+  }
+}
+
+No scenes. No presets required in v1.
+
+⸻
+
+Performance Targets
+	•	1000–3000 particles
+	•	30–60 FPS on mobile
+	•	Avoid heavy per-frame allocations
+	•	Reuse arrays/objects
+
+⸻
+
+Non-Goals (do NOT implement)
+	•	Timeline editor
+	•	Scene sequencing
+	•	Text overlays
+	•	Image/video overlays
+	•	Preset system (beyond simple state copy if needed)
+	•	Plugin system
+	•	UI builder abstractions
+	•	Advanced GPU systems (for now)
+
+⸻
+
+Deliverables
+	1.	Working real-time visualizer
+	2.	Audio playback + scrubbing
+	3.	Live parameter controls
+	4.	Stable particle simulation
+	5.	Export functionality
+
+⸻
+
+Implementation Order
+	1.	Canvas + render loop
+	2.	Static particle orb (no audio)
+	3.	Add forces (no audio)
+	4.	Add audio analysis
+	5.	Map audio → forces
+	6.	Add UI controls
+	7.	Add scrubbing + playback
+	8.	Optimize performance
+	9.	Add export
+
+⸻
+
+Important Notes
+	•	Keep code simple and readable
+	•	Prefer explicit logic over abstraction
+	•	Avoid premature optimization beyond basic performance hygiene
+	•	This is a tool, not a framework
+
+⸻
+
+If anything is unclear, ask before inventing new systems.
