@@ -1,0 +1,586 @@
+    // --- Export Controls ---
+    const exportPanel = document.createElement('div');
+    exportPanel.style.position = 'absolute';
+    exportPanel.style.left = '50%';
+    exportPanel.style.bottom = '70px';
+    exportPanel.style.transform = 'translateX(-50%)';
+    exportPanel.style.background = 'rgba(24,26,32,0.96)';
+    exportPanel.style.padding = '10px 18px';
+    exportPanel.style.borderRadius = '10px';
+    exportPanel.style.zIndex = 40;
+    exportPanel.style.display = 'flex';
+    exportPanel.style.gap = '12px';
+    exportPanel.style.alignItems = 'center';
+    exportPanel.style.userSelect = 'none';
+    exportPanel.style.touchAction = 'none';
+
+    const resSel = document.createElement('select');
+    [
+      { label: '720p', w: 1280, h: 720 },
+      { label: '1080p', w: 1920, h: 1080 },
+      { label: 'Square', w: 1080, h: 1080 },
+      { label: 'Current', w: 0, h: 0 },
+    ].forEach(opt => {
+      const o = document.createElement('option');
+      o.value = JSON.stringify({ w: opt.w, h: opt.h });
+      o.textContent = opt.label;
+      resSel.appendChild(o);
+    });
+    exportPanel.appendChild(resSel);
+
+    const fpsSel = document.createElement('select');
+    [30, 60].forEach(fps => {
+      const o = document.createElement('option');
+      o.value = fps;
+      o.textContent = fps + ' FPS';
+      fpsSel.appendChild(o);
+    });
+    exportPanel.appendChild(fpsSel);
+
+    const exportBtn = document.createElement('button');
+    exportBtn.textContent = 'Export MP4';
+    exportBtn.style.fontSize = '16px';
+    exportBtn.style.padding = '6px 18px';
+    exportBtn.style.borderRadius = '8px';
+    exportBtn.style.border = 'none';
+    exportBtn.style.background = '#2a7fff';
+    exportBtn.style.color = '#fff';
+    exportBtn.style.cursor = 'pointer';
+    exportPanel.appendChild(exportBtn);
+
+    document.body.appendChild(exportPanel);
+
+    exportBtn.addEventListener('click', async () => {
+      exportBtn.disabled = true;
+      exportBtn.textContent = 'Exporting...';
+      // Get export settings
+      const { w, h } = JSON.parse(resSel.value);
+      const fps = parseInt(fpsSel.value);
+      // Setup offscreen canvas
+      const outW = w || canvas.width;
+      const outH = h || canvas.height;
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = outW;
+      exportCanvas.height = outH;
+      const exportCtx = exportCanvas.getContext('2d');
+      // Setup MediaRecorder
+      const stream = exportCanvas.captureStream(fps);
+      let audioStream = null;
+      if (audioElement && audioContext) {
+        try {
+          const dest = audioContext.createMediaStreamDestination();
+          sourceNode.connect(dest);
+          audioStream = dest.stream;
+        } catch {}
+      }
+      let combinedStream = stream;
+      if (audioStream) {
+        const tracks = [...stream.getVideoTracks(), ...audioStream.getAudioTracks()];
+        combinedStream = new MediaStream(tracks);
+      }
+      const recorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm' });
+      const chunks = [];
+      recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+      let duration = audioElement && audioElement.duration ? audioElement.duration : 10;
+      // Seek to start
+      if (audioElement) {
+        audioElement.currentTime = 0;
+        audioElement.pause();
+      }
+      // Render loop for export
+      let frame = 0;
+      const totalFrames = Math.floor(duration * fps);
+      recorder.start();
+      function drawExportFrame() {
+        // Draw current frame to export canvas
+        exportCtx.fillStyle = '#181a20';
+        exportCtx.fillRect(0, 0, outW, outH);
+        exportCtx.save();
+        exportCtx.translate(outW / 2, outH / 2);
+        // Draw particles (reuse main render logic, but on exportCtx)
+        for (let i = 0; i < particles.length; i++) {
+          const p = particles[i];
+          const t = Math.sqrt(p.x * p.x + p.y * p.y) / params.radius;
+          const color = `rgba(${100 + 80 * t}, ${150 + 50 * t}, 255, ${0.18 + 0.12 * t})`;
+          exportCtx.beginPath();
+          exportCtx.arc(p.x * (outW / canvas.width), p.y * (outH / canvas.height), 4 + 2 * p.depth, 0, 2 * Math.PI);
+          exportCtx.fillStyle = color;
+          exportCtx.shadowColor = color;
+          exportCtx.shadowBlur = 12 + 10 * t;
+          exportCtx.fill();
+        }
+        exportCtx.restore();
+      }
+      // Play audio if available
+      if (audioElement) {
+        audioElement.currentTime = 0;
+        audioElement.play();
+      }
+      // Frame-by-frame export
+      let exportFrame = 0;
+      function exportLoop() {
+        if (exportFrame >= totalFrames) {
+          recorder.stop();
+          if (audioElement) audioElement.pause();
+          return;
+        }
+        drawExportFrame();
+        exportFrame++;
+        setTimeout(exportLoop, 1000 / fps);
+      }
+      exportLoop();
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'orb-visualizer.webm';
+        a.click();
+        exportBtn.disabled = false;
+        exportBtn.textContent = 'Export MP4';
+      };
+    });
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Orb Visualizer</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #181a20;
+    }
+    #orb-canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: #181a20;
+      touch-action: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="orb-canvas"></canvas>
+  <script>
+    const canvas = document.getElementById('orb-canvas');
+    const ctx = canvas.getContext('2d');
+
+    function resizeCanvas() {
+      // Use devicePixelRatio for crisp rendering
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(window.innerWidth * dpr);
+      canvas.height = Math.round(window.innerHeight * dpr);
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.scale(dpr, dpr);
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // --- Particle Orb Setup ---
+    const params = {
+      radius: 140,
+      particleCount: 800,
+      sensitivity: 0.5,
+      baseline: 0.0,
+      smoothing: 0.7,
+      burst: 0.09,
+      swirl: 0.12,
+      jitter: 0.08,
+      damping: 0.92,
+      glow: 1.0,
+    };
+
+    // --- UI Controls ---
+    const controls = [
+      { key: 'radius', min: 60, max: 300, step: 1 },
+      { key: 'particleCount', min: 100, max: 2000, step: 1 },
+      { key: 'sensitivity', min: 0, max: 2, step: 0.01 },
+      { key: 'baseline', min: 0, max: 1, step: 0.01 },
+      { key: 'smoothing', min: 0, max: 0.99, step: 0.01 },
+      { key: 'burst', min: 0, max: 0.3, step: 0.01 },
+      { key: 'swirl', min: 0, max: 0.5, step: 0.01 },
+      { key: 'jitter', min: 0, max: 0.5, step: 0.01 },
+      { key: 'damping', min: 0.7, max: 0.99, step: 0.01 },
+      { key: 'glow', min: 0, max: 2, step: 0.01 },
+    ];
+
+    const uiPanel = document.createElement('div');
+    uiPanel.style.position = 'absolute';
+    uiPanel.style.right = '10px';
+    uiPanel.style.top = '10px';
+    uiPanel.style.background = 'rgba(24,26,32,0.92)';
+    uiPanel.style.padding = '12px 16px';
+    uiPanel.style.borderRadius = '12px';
+    uiPanel.style.zIndex = 20;
+    uiPanel.style.maxWidth = '260px';
+    uiPanel.style.fontFamily = 'sans-serif';
+    uiPanel.style.color = '#fff';
+    uiPanel.style.fontSize = '15px';
+    uiPanel.style.boxShadow = '0 2px 12px #0006';
+    uiPanel.style.userSelect = 'none';
+    uiPanel.style.touchAction = 'none';
+
+    controls.forEach(({ key, min, max, step }) => {
+      const label = document.createElement('label');
+      label.textContent = key;
+      label.style.display = 'block';
+      label.style.margin = '8px 0 2px 0';
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = min;
+      input.max = max;
+      input.step = step;
+      input.value = params[key];
+      input.style.width = '100%';
+      input.addEventListener('input', (e) => {
+        let v = parseFloat(e.target.value);
+        params[key] = v;
+        if (key === 'particleCount') {
+          particles = createParticles(params.particleCount, params.radius);
+        }
+        if (key === 'radius') {
+          particles.forEach((p, i) => {
+            const radialBias = 0.5 + 0.5 * Math.pow(Math.random(), 0.4);
+            p.radius0 = params.radius * radialBias;
+          });
+        }
+      });
+      label.appendChild(input);
+      uiPanel.appendChild(label);
+    });
+    document.body.appendChild(uiPanel);
+
+    function createParticles(count, baseRadius) {
+      // Limit particle count for small screens
+      const maxParticles = window.innerWidth < 600 ? 900 : 2000;
+      count = Math.min(count, maxParticles);
+      const particles = new Array(count);
+      for (let i = 0; i < count; i++) {
+        const angle = (i / count) * 2 * Math.PI;
+        const radialBias = 0.5 + 0.5 * Math.pow(Math.random(), 0.4);
+        const radius0 = baseRadius * radialBias;
+        const x = Math.cos(angle) * radius0;
+        const y = Math.sin(angle) * radius0;
+        particles[i] = {
+          angle,
+          radius0,
+          x,
+          y,
+          vx: 0,
+          vy: 0,
+          noiseOffset: Math.random() * 1000,
+          depth: Math.random(),
+        };
+      }
+      return particles;
+    }
+
+    let particles = createParticles(params.particleCount, params.radius);
+
+    // --- Force Parameters (no audio yet) ---
+    // forceParams now references params for live updates
+    const forceParams = {
+      cohesion: 0.015,
+      centerPull: 0.002,
+      get radialStrength() { return 0.04; },
+      get swirl() { return params.swirl; },
+      get jitter() { return params.jitter; },
+      get burst() { return params.burst; },
+      get damping() { return params.damping; },
+    };
+
+    // --- Audio Analysis ---
+    let audioContext = null;
+    let analyser = null;
+    let sourceNode = null;
+    let audioBuffer = null;
+    let audioElement = null;
+    let freqData = null;
+    let timeData = null;
+    let lastFrameTime = performance.now();
+    let frameSkip = 0;
+    function render() {
+      const now = performance.now();
+      const dt = (now - lastFrameTime) / 1000;
+      lastFrameTime = now;
+      // Limit to 60 FPS, skip frame if running slow
+      if (dt > 0.05) frameSkip++;
+      else frameSkip = 0;
+      if (frameSkip > 2) {
+        requestAnimationFrame(render);
+        return;
+      }
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.save();
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      // --- Per-frame update ---
+      const { energy, low, mid, high } = getAudioFeatures();
+      const baseRadius = params.radius;
+      const sensitivity = params.sensitivity;
+      const baseline = params.baseline;
+      const smoothing = params.smoothing;
+      if (!render.prevEnergy) render.prevEnergy = energy;
+      render.prevEnergy = render.prevEnergy * smoothing + energy * (1 - smoothing);
+      const smoothedEnergy = render.prevEnergy + baseline;
+      const targetRadius = baseRadius * (1 + smoothedEnergy * sensitivity);
+
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        let ax = 0, ay = 0;
+        // Home position
+        const homeX = Math.cos(p.angle) * p.radius0;
+        const homeY = Math.sin(p.angle) * p.radius0;
+        // Current position
+        const x = p.x, y = p.y;
+        const length = Math.sqrt(x * x + y * y) || 1;
+        // Home attraction
+        ax += (homeX - x) * forceParams.cohesion;
+        ay += (homeY - y) * forceParams.cohesion;
+        // Center pull
+        ax += -x * forceParams.centerPull;
+        ay += -y * forceParams.centerPull;
+        // Radial expansion
+        const dx = x / length, dy = y / length;
+        ax += dx * (targetRadius - length) * forceParams.radialStrength;
+        ay += dy * (targetRadius - length) * forceParams.radialStrength;
+        // Swirl (mid)
+        ax += -dy * forceParams.swirl * mid;
+        ay += dx * forceParams.swirl * mid;
+        // Jitter (high)
+        const noise = noise2D(p.noiseOffset + (audioContext ? audioContext.currentTime : 0));
+        ax += noise.x * forceParams.jitter * high;
+        ay += noise.y * forceParams.jitter * high;
+        // Burst (low, edge-weighted)
+        const edgeFactor = Math.max(0, Math.min(1, length / baseRadius));
+        const burstForce = low * forceParams.burst * edgeFactor;
+        ax += dx * burstForce;
+        ay += dy * burstForce;
+        // Damping
+        p.vx *= forceParams.damping;
+        p.vy *= forceParams.damping;
+        // Integrate
+        p.vx += ax;
+        p.vy += ay;
+        p.x += p.vx;
+        p.y += p.vy;
+      }
+
+      // --- Draw particles ---
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        const t = Math.sqrt(p.x * p.x + p.y * p.y) / params.radius;
+        const color = `rgba(${100 + 80 * t}, ${150 + 50 * t}, 255, ${0.18 + 0.12 * t})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 4 + 2 * p.depth, 0, 2 * Math.PI);
+        ctx.fillStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 12 + 10 * t;
+        ctx.fill();
+      }
+      ctx.restore();
+      requestAnimationFrame(render);
+    }
+    render();
+    // Audio file load
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (audioElement) {
+        audioElement.pause();
+        audioElement.remove();
+      }
+      audioElement = new Audio();
+      audioElement.src = URL.createObjectURL(file);
+      audioElement.preload = 'auto';
+      audioElement.loop = isLooping;
+      document.body.appendChild(audioElement);
+      audioElement.style.display = 'none';
+      audioElement.addEventListener('play', () => {
+        if (!audioContext) {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (!sourceNode) {
+          sourceNode = audioContext.createMediaElementSource(audioElement);
+          analyser = audioContext.createAnalyser();
+          analyser.fftSize = 2048;
+          sourceNode.connect(analyser);
+          analyser.connect(audioContext.destination);
+          freqData = new Uint8Array(analyser.frequencyBinCount);
+          timeData = new Uint8Array(analyser.fftSize);
+        }
+        isAudioLoaded = true;
+      });
+      audioElement.addEventListener('ended', () => {
+        playBtn.textContent = 'Play';
+      });
+      audioElement.addEventListener('pause', () => {
+        playBtn.textContent = 'Play';
+      });
+      audioElement.addEventListener('play', () => {
+        playBtn.textContent = 'Pause';
+      });
+      audioElement.addEventListener('timeupdate', () => {
+        if (!isSeeking) {
+          scrub.value = audioElement.currentTime / audioElement.duration || 0;
+        }
+      });
+    });
+
+    playBtn.addEventListener('click', () => {
+      if (!audioElement) return;
+      if (audioElement.paused) {
+        audioElement.play();
+      } else {
+        audioElement.pause();
+      }
+    });
+
+    loopBtn.addEventListener('click', () => {
+      isLooping = !isLooping;
+      loopBtn.textContent = 'Loop: ' + (isLooping ? 'On' : 'Off');
+      if (audioElement) audioElement.loop = isLooping;
+    });
+
+    scrub.addEventListener('input', (e) => {
+      if (!audioElement) return;
+      isSeeking = true;
+      seekTarget = parseFloat(scrub.value);
+    });
+    scrub.addEventListener('change', (e) => {
+      if (!audioElement) return;
+      audioElement.currentTime = seekTarget * audioElement.duration;
+      isSeeking = false;
+    });
+
+    // Band ranges (Hz)
+    const bandRanges = {
+      low: [20, 180],
+      mid: [180, 1800],
+      high: [1800, 8000],
+    };
+
+    function getAudioFeatures() {
+      if (!analyser || !isAudioLoaded) {
+        // fallback: static
+        return { energy: 0, low: 0, mid: 0, high: 0 };
+      }
+      analyser.getByteTimeDomainData(timeData);
+      analyser.getByteFrequencyData(freqData);
+      // Energy (RMS)
+      let sum = 0;
+      for (let i = 0; i < timeData.length; i++) {
+        const v = (timeData[i] - 128) / 128;
+        sum += v * v;
+      }
+      const energy = Math.sqrt(sum / timeData.length);
+      // Frequency bands
+      const sampleRate = audioContext.sampleRate;
+      const binCount = analyser.frequencyBinCount;
+      function bandAvg([lo, hi]) {
+        const start = Math.floor(lo / (sampleRate / 2) * binCount);
+        const end = Math.min(binCount - 1, Math.ceil(hi / (sampleRate / 2) * binCount));
+        let s = 0, c = 0;
+        for (let i = start; i <= end; i++) {
+          s += freqData[i];
+          c++;
+        }
+        return c ? s / c / 255 : 0;
+      }
+      return {
+        energy,
+        low: bandAvg(bandRanges.low),
+        mid: bandAvg(bandRanges.mid),
+        high: bandAvg(bandRanges.high),
+      };
+    }
+
+    // Simple 2D noise (pseudo-random)
+    function noise2D(seed) {
+      // Use sine/cos for simple repeatable noise
+      return {
+        x: Math.sin(seed * 12.9898) * 43758.5453 % 1,
+        y: Math.cos(seed * 78.233) * 12345.6789 % 1,
+      };
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.save();
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+
+      // --- Per-frame update ---
+      const { energy, low, mid, high } = getAudioFeatures();
+      const baseRadius = params.radius;
+      const sensitivity = params.sensitivity;
+      const baseline = params.baseline;
+      const smoothing = params.smoothing;
+      if (!render.prevEnergy) render.prevEnergy = energy;
+      render.prevEnergy = render.prevEnergy * smoothing + energy * (1 - smoothing);
+      const smoothedEnergy = render.prevEnergy + baseline;
+      const targetRadius = baseRadius * (1 + smoothedEnergy * sensitivity);
+
+      for (const p of particles) {
+        let ax = 0, ay = 0;
+        // Home position
+        const homeX = Math.cos(p.angle) * p.radius0;
+        const homeY = Math.sin(p.angle) * p.radius0;
+        // Current position
+        const x = p.x, y = p.y;
+        const length = Math.sqrt(x * x + y * y) || 1;
+        // Home attraction
+        ax += (homeX - x) * forceParams.cohesion;
+        ay += (homeY - y) * forceParams.cohesion;
+        // Center pull
+        ax += -x * forceParams.centerPull;
+        ay += -y * forceParams.centerPull;
+        // Radial expansion
+        const dx = x / length, dy = y / length;
+        ax += dx * (targetRadius - length) * forceParams.radialStrength;
+        ay += dy * (targetRadius - length) * forceParams.radialStrength;
+        // Swirl (mid)
+        ax += -dy * forceParams.swirl * mid;
+        ay += dx * forceParams.swirl * mid;
+        // Jitter (high)
+        const noise = noise2D(p.noiseOffset + (audioContext ? audioContext.currentTime : 0));
+        ax += noise.x * forceParams.jitter * high;
+        ay += noise.y * forceParams.jitter * high;
+        // Burst (low, edge-weighted)
+        const edgeFactor = Math.max(0, Math.min(1, length / baseRadius));
+        const burstForce = low * forceParams.burst * edgeFactor;
+        ax += dx * burstForce;
+        ay += dy * burstForce;
+        // Damping
+        p.vx *= forceParams.damping;
+        p.vy *= forceParams.damping;
+        // Integrate
+        p.vx += ax;
+        p.vy += ay;
+        p.x += p.vx;
+        p.y += p.vy;
+      }
+
+      // --- Draw particles ---
+      for (const p of particles) {
+        const t = Math.sqrt(p.x * p.x + p.y * p.y) / params.radius;
+        const color = `rgba(${100 + 80 * t}, ${150 + 50 * t}, 255, ${0.18 + 0.12 * t})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 4 + 2 * p.depth, 0, 2 * Math.PI);
+        ctx.fillStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 12 + 10 * t;
+        ctx.fill();
+      }
+      ctx.restore();
+      requestAnimationFrame(render);
+    }
+    render();
+  </script>
+</body>
+</html>
